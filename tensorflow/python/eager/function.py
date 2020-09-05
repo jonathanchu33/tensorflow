@@ -2423,6 +2423,9 @@ class FunctionSpec(object):
       experimental_follow_type_hints: see `tf.function`.
       name: Name of the function
     """
+    self._cpp_functionspec = _concrete_function.FunctionSpec(
+        fullargspec, is_method, input_signature, bool(is_pure),
+        experimental_follow_type_hints, name)
     self._fullargspec = fullargspec
     self._is_method = is_method
     self._is_pure = is_pure
@@ -2516,60 +2519,66 @@ class FunctionSpec(object):
     Returns:
       A `string`.
     """
-    args = list(self._arg_names)
-    if default_values:
-      for (i, default) in self._arg_indices_to_default_values.items():
-        args[i] += "={}".format(default)
-    if self._fullargspec.kwonlyargs:
-      args.append("*")
-      for arg_name in self._fullargspec.kwonlyargs:
-        args.append(arg_name)
-        if default_values and arg_name in self._fullargspec.kwonlydefaults:
-          args[-1] += "={}".format(self._fullargspec.kwonlydefaults[arg_name])
-    return "{}({})".format(self._name, ", ".join(args))
+    return self._cpp_functionspec.signature_summary(default_values)
+    # args = list(self._arg_names)
+    # if default_values:
+    #   for (i, default) in self._arg_indices_to_default_values.items():
+    #     args[i] += "={}".format(default)
+    # if self._fullargspec.kwonlyargs:
+    #   args.append("*")
+    #   for arg_name in self._fullargspec.kwonlyargs:
+    #     args.append(arg_name)
+    #     if default_values and arg_name in self._fullargspec.kwonlydefaults:
+    #       args[-1] += "={}".format(self._fullargspec.kwonlydefaults[arg_name])
+    # return "{}({})".format(self._name, ", ".join(args))
 
   def _convert_variables_to_tensors(self, args, kwargs):
-    args = [ops.convert_to_tensor(x) for x in args]
-    kwargs = {kw: ops.convert_to_tensor(x) for kw, x in kwargs.items()}
-    return tuple(args), kwargs
+    return self._cpp_functionspec._convert_variables_to_tensors(args, kwargs)
+    # args = [ops.convert_to_tensor(x) for x in args]
+    # kwargs = {kw: ops.convert_to_tensor(x) for kw, x in kwargs.items()}
+    # return tuple(args), kwargs
 
   def _convert_annotated_args_to_tensors(self, args, kwargs):
     """Attempts to autobox arguments annotated as tf.Tensor."""
-    if self.input_signature is not None:
-      return
-
-    args = list(args)
-    for i, arg in enumerate(args):
-      # See
-      # https://docs.python.org/3/library/inspect.html#inspect.getfullargspec
-      if i < len(self._fullargspec.args):
-        arg_annotation = self._fullargspec.annotations.get(
-            self._fullargspec.args[i])
-        # TODO(rahulkamat): Change to TensorLike (here ans below).
-        if arg_annotation == ops.Tensor:
-          args[i] = ops.convert_to_tensor(arg)
-      else:
-        varargs_annotation = self._fullargspec.annotations.get(
-            self._fullargspec.varargs)
-        if varargs_annotation == ops.Tensor:
-          args[i] = ops.convert_to_tensor(arg)
-
-    for kw, v in kwargs.items():
-      if kw in self._fullargspec.kwonlyargs:
-        kwonlyarg_annotation = self._fullargspec.annotations.get(kw)
-        if kwonlyarg_annotation == ops.Tensor:
-          kwargs[kw] = ops.convert_to_tensor(v)
-      elif self._fullargspec.varkw is not None:
-        varkw_annotation = self._fullargspec.annotations.get(
-            self._fullargspec.varkw)
-        if kw in self._fullargspec.args:
-          arg_annotation = self._fullargspec.annotations.get(kw)
-          if arg_annotation == ops.Tensor:
-            kwargs[kw] = ops.convert_to_tensor(v)
-        elif varkw_annotation == ops.Tensor:
-          kwargs[kw] = ops.convert_to_tensor(v)
-
-    return tuple(args), kwargs
+    return self._cpp_functionspec._convert_annotated_args_to_tensors(args, kwargs)
+#     if self.input_signature is not None:
+#       return
+# 
+#     args = list(args)
+#     for i, arg in enumerate(args):
+#       # See
+#       # https://docs.python.org/3/library/inspect.html#inspect.getfullargspec
+#       if i < len(self._fullargspec.args):
+#         arg_annotation = self._fullargspec.annotations.get(
+#             self._fullargspec.args[i])
+#         # TODO(rahulkamat): Change to TensorLike (here ans below).
+#         if arg_annotation == ops.Tensor:
+#           args[i] = ops.convert_to_tensor(arg)
+#       else:
+#         varargs_annotation = self._fullargspec.annotations.get(
+#             self._fullargspec.varargs)
+#         if varargs_annotation == ops.Tensor:
+#           args[i] = ops.convert_to_tensor(arg)
+# 
+#     for kw, v in kwargs.items():
+#       if kw in self._fullargspec.kwonlyargs:
+#         kwonlyarg_annotation = self._fullargspec.annotations.get(kw)
+#         if kwonlyarg_annotation == ops.Tensor:
+#           kwargs[kw] = ops.convert_to_tensor(v)
+#           # raise TypeError("InnerOuch")
+#       elif self._fullargspec.varkw is not None:
+#         varkw_annotation = self._fullargspec.annotations.get(
+#             self._fullargspec.varkw)
+#         if kw in self._fullargspec.args:
+#           arg_annotation = self._fullargspec.annotations.get(kw)
+#           if arg_annotation == ops.Tensor:
+#             kwargs[kw] = ops.convert_to_tensor(v)
+#            #  raise TypeError("InnerOuch2")
+#         elif varkw_annotation == ops.Tensor:
+#           kwargs[kw] = ops.convert_to_tensor(v)
+#           # raise TypeError("INnerOuch3")
+# 
+#     return tuple(args), kwargs
 
   def canonicalize_function_inputs(self, *args, **kwargs):
     """Canonicalizes `args` and `kwargs`.
@@ -2603,6 +2612,7 @@ class FunctionSpec(object):
         argument when an input signature is specified, or when the inputs
         do not conform to the input signature.
     """
+    # return self._cpp_functionspec.canonicalize_function_inputs(*args, **kwargs)
     if self._is_pure:
       args, kwargs = self._convert_variables_to_tensors(args, kwargs)
     if self._experimental_follow_type_hints:
@@ -2674,6 +2684,9 @@ class FunctionSpec(object):
       if self._fullargspec.kwonlydefaults:
         for (kwarg, default) in self._fullargspec.kwonlydefaults.items():
           kwargs.setdefault(kwarg, default)
+
+    # if self._experimental_follow_type_hints:
+    #   inputs, kwargs = self._convert_annotated_args_to_tensors(inputs, kwargs)
 
     if self._input_signature is None:
       inputs, flat_inputs, filtered_flat_inputs = _convert_numpy_inputs(inputs)
