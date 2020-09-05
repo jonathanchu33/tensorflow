@@ -25,6 +25,22 @@ limitations under the License.
 #include <vector>
 #include <map>
 #include <unordered_map>
+#include <stdexcept>
+#include <iostream> // To delete
+
+///// Nit checks:
+// - References: py::handle or py::object??
+// - Casting/conversion between all these types (see cheatsheet)
+// - Const auto& / auto& / auto for iterations
+// - The types of objects that are returned when using .attr() and their conversions
+
+////// Should be irrelevant by now:
+// - C API vs PyBind: Getting truth value of python object, string representation, hasinstance etc.
+// - String construction and string interning (std::string vs py::string)
+// - Eliminating costly operations, perhaps like py::dict[] access which actually go through Python?
+
+////// To implement
+// - Pickling
 
 namespace py = pybind11;
 
@@ -51,6 +67,7 @@ class PyConcreteFunction {
                               bool _ndarrays_list, bool _ndarray_singleton);
 };
 
+///// Review (1) order of vars, (2) types of containers) //////
 // TODO(jlchu): Add Pickling support; see
 // https://pybind11.readthedocs.io/en/stable/advanced/classes.html#pickling-support
 class FunctionSpec {
@@ -66,6 +83,7 @@ class FunctionSpec {
   py::dict kwonlydefaults_;
   py::dict annotations_;
   std::unordered_map<std::string, int> args_to_indices_;
+  //// Note that related conatiners were changed to py::handle!!! ///
   std::map<int, py::object> arg_indices_to_default_values_;
 
   bool input_signature_is_none_;
@@ -82,6 +100,7 @@ class FunctionSpec {
   std::string SignatureSummary(bool default_values = false);
   py::tuple ConvertVariablesToTensors(py::tuple args, py::dict kwargs);
   py::tuple ConvertAnnotatedArgsToTensors(py::tuple oargs, py::dict kwargs);
+  py::object CanonicalizeFunctionInputs(py::args oargs, py::kwargs okwargs);
 };
 
 namespace {
@@ -170,6 +189,9 @@ py::object PyConcreteFunction::BuildCallOutputs(
   return nest->attr("pack_sequence_as")(structured_outputs, outputs_list, true);
 }
 
+//////// Finished, save for nits: ////////////
+/////// 5 nits to fix, relating to types or casts/conversions /////////////
+////// 1 Check handle/object types in signature //////
 FunctionSpec::FunctionSpec(py::object fullargspec,
                            bool is_method,
                            py::handle input_signature,
@@ -202,13 +224,17 @@ FunctionSpec::FunctionSpec(py::object fullargspec,
     kwonlydefaults_ = kwonlydefaults_or_none;
   }
 
+  ////// 2 What best type for hash key?? /////
   // A cache mapping from argument name to index, for canonicalizing
   // arguments that are called in a keyword-like fashion.
   for (int i = 0; i < arg_names_.size(); ++i) {
     std::string argname_string = PyObjectToString(arg_names_[i].ptr());
     args_to_indices_[argname_string] = i;
+    // args_to_indices_[&((py::handle) arg_names_[i])] = i;
+    // args_to_indices_[(py::handle) arg_names_[i]] = i;
   }
 
+  /////// 3 Check the type of args_indices_to_default_values here /////
   // A cache mapping from arg index to default value, for canonicalization.
   py::object defaults_or_none = fullargspec.attr("defaults");
   if (!defaults_or_none.is_none()) {
@@ -218,11 +244,15 @@ FunctionSpec::FunctionSpec(py::object fullargspec,
       offset -= default_values.size();
       for (int i = 0; i < default_values.size(); ++i) {
         arg_indices_to_default_values_[offset + i] = default_values[i];
+        // py::object dvalue = (py::object) default_values[i]; /// Watch this cast
+        // arg_indices_to_default_values_[offset + i] = dvalue;
+        // arg_indices_to_default_values_[offset + i] = (py::handle*) &default_values[i];
       }
     }
   }
 
   if (!input_signature_is_none_) {
+    ////////////// 4 casts or conversions to sets??? /////////////
     py::set kwonly_nodefaults = py::set(kwonlyargs_);
     if (!kwonlydefaults_.empty()) {
       kwonly_nodefaults -= py::set(kwonlydefaults_);
@@ -240,7 +270,9 @@ FunctionSpec::FunctionSpec(py::object fullargspec,
           Py_TYPE(input_signature.ptr())->tp_name));
     }
 
+    /////////// 5 Cast (instead of construct right??) //////////////
     input_signature_ = py::cast<py::tuple>(input_signature);
+    // input_signature_ = py::tuple(input_signature);
     flat_input_signature_ = py::tuple(
         PyoOrThrow(swig::Flatten(input_signature.ptr(), true)));
   }
@@ -356,6 +388,172 @@ py::tuple FunctionSpec::ConvertAnnotatedArgsToTensors(py::tuple oargs,
   return py::make_tuple(py::tuple(args), kwargs);
 }
 
+////// 8 left: experimental case and and mostly type traps /////
+py::object FunctionSpec::CanonicalizeFunctionInputs(py::args oargs, py::kwargs okwargs) {
+  py::tuple args = (py::tuple) oargs;
+  py::dict kwargs = (py::dict) okwargs;
+  if (is_pure_) {
+    py::tuple converted = ConvertVariablesToTensors(args, kwargs);
+    args = converted[0];
+    kwargs = converted[1];
+  }
+  // static const py::object* convert_annotated_args_to_tensors = new py::object(
+  //     py::module::import("tensorflow.python.eager.function")
+  //         .attr("FunctionSpec").attr("_convert_annotated_args_to_tensors"));
+  ////// 1 experimental //////
+  if (experimental_follow_type_hints_ && input_signature_is_none_) {
+    py::tuple converted = ConvertAnnotatedArgsToTensors(args, kwargs);
+    args = converted[0];
+    kwargs = converted[1];
+  }
+  if (!input_signature_is_none_) {
+    if (args.size() > input_signature_.size()) {
+      throw py::type_error(tensorflow::strings::StrCat(
+          SignatureSummary(), " takes ", input_signature_.size(),
+          " positional arguments (as specified by the input_signature) but ",
+          args.size(), " were given"));
+    }
+    for (const auto& item : kwargs) {
+      int index;
+      try {
+        ///////// 2 The logic here is correct, but maybe not the pointer/type /////
+        // index = args_to_indices_.at((py::handle*) &(item.first)); /// Watch this cast
+        index = args_to_indices_.at(PyObjectToString(item.first.ptr()));
+      } catch (const std::out_of_range& e) {
+        throw py::type_error(tensorflow::strings::StrCat(
+            SignatureSummary(), " got unexpected keyword argument `",
+            std::string((py::str) item.first), "`")); /// Watch this cast
+      }
+      if (index >= input_signature_.size()) {
+        throw py::type_error(tensorflow::strings::StrCat(
+            SignatureSummary(), " got keyword argument `",
+            std::string((py::str) item.first), /// Watch this cast
+            "` that was not included in input_signature"));
+      }
+    }
+  }
+
+  py::tuple inputs;
+  if (kwargs.empty()) {
+    inputs = args;
+    if (!arg_indices_to_default_values_.empty()) {
+      py::list remaining_args;
+      try {
+        for (int i = args.size(); i < arg_names_.size(); ++i) {
+          /////// 3 Again, logic correct but need to verify container////
+          remaining_args.append((arg_indices_to_default_values_[i]));
+          // remaining_args.append(*(arg_indices_to_default_values_[i]));
+        }
+        // inputs = py::tuple(py::list(args) + remaining_args);
+        inputs += py::tuple(remaining_args); /// Watch this cast
+      }
+      catch(const std::out_of_range& e) {
+        std::vector<std::string> missing_args;
+        for (int i = args.size(); i < arg_names_.size(); ++i) {
+          if (arg_indices_to_default_values_.find(i) ==
+              arg_indices_to_default_values_.end()) {
+            missing_args.push_back((py::str) arg_names_[i]); /// Watch this cast
+          }
+        }
+        throw py::type_error(tensorflow::strings::StrCat(
+            SignatureSummary(), " missing required arguments: ",
+            JoinVector(", ", missing_args)));
+      }
+    }
+
+    ///// 3.5 Maybe converte this to update C API function?? ///
+    if (!kwonlydefaults_.empty()) {
+      for (const auto& item : kwonlydefaults_) {
+        kwargs[item.first] = item.second;
+      }
+    }
+  } else {
+    // Maps from index of arg to its corresponding value, according to `args`
+    // and `kwargs`; seeded with the default values for the named args that
+    // aren't in `args`.
+    ///// 4 Logic right but watch type /////
+    std::map<int, py::handle> args_indices_to_values;
+    for (auto it = arg_indices_to_default_values_.find(args.size());
+         it != arg_indices_to_default_values_.end(); ++it) {
+      // args_indices_to_values[it->first] = &(it->second);
+      args_indices_to_values[it->first] = it->second;
+    }
+    std::vector<py::handle> consumed_args;
+
+    for (const auto& item : kwargs) {
+      int index;
+      try {
+        // index = args_to_indices_.at((py::handle*) &(item.first)); /// Watch this cast
+        index = args_to_indices_.at(PyObjectToString(item.first.ptr()));
+        if (index < args.size()) {
+          throw py::type_error(tensorflow::strings::StrCat(
+              SignatureSummary(), " got two values for argument `",
+              std::string((py::str) item.first), "`")); /// Watch this cast
+        }
+        // args_indices_to_values[index] = (py::handle*) &item.second;
+        // py::handle value = item.second;
+        // args_indices_to_values[index] = value;
+        args_indices_to_values[index] = item.second;
+        // args_indices_to_values[index] = (py::handle) item.second;
+        consumed_args.push_back(item.first);
+      } catch (const std::out_of_range& e) {} // Do nothing
+    }
+
+    ///// 5 Again, watch type////
+    for (const auto& arg : consumed_args) {
+      PyDict_DelItem(kwargs.ptr(), arg.ptr());
+    }
+    inputs = args;
+    ////// 5.5 Is it possible to convert map directly into list? ////
+    py::list remaining_args = py::list(args_indices_to_values.size());
+    int index = 0;
+    ////// 6 Watch type ////
+    for (const auto& item : args_indices_to_values) {
+      remaining_args[index] = item.second;
+      ++index;
+    }
+    // inputs = py::tuple(py::list(args) + remaining_args);
+    inputs += py::tuple(remaining_args);
+
+    if (!kwargs.empty() && !input_signature_is_none_) {
+      throw py::type_error(tensorflow::strings::StrCat(
+          SignatureSummary(), " got unexpected keyword arguments: ",
+          JoinPyDict(", ", kwargs),
+          "\n(Cannot define a TensorFlow function from a Python ",
+          "function with keyword arguments when input_signature is provided.)"));
+      }
+
+    if (!kwonlydefaults_.empty()) {
+      ///// 7 Watch types here too!! ////
+      for (const auto& item : kwonlydefaults_) {
+        // if (!kwargs.contains(item.first)) {
+        //   kwargs[item.first] = item.second;
+        // }
+        PyDict_SetDefault(kwargs.ptr(), item.first.ptr(), item.second.ptr());
+      }
+    }
+  }
+
+  static const py::object* _convert_inputs_to_signature = new py::object(
+      py::module::import("tensorflow.python.eager.function")
+          .attr("_convert_inputs_to_signature"));
+
+  if (input_signature_is_none_) {
+    py::tuple converted_inputs = ConvertNumpyInputs(inputs);
+    py::tuple converted_kwargs = ConvertNumpyInputs(kwargs);
+    return py::make_tuple(
+        converted_inputs[0], converted_kwargs[0],
+        converted_inputs[1] + converted_kwargs[1],
+        converted_inputs[2] + converted_kwargs[2]);
+  } else {
+    assert(kwargs.empty());
+    py::tuple converted_inputs = (*_convert_inputs_to_signature)(
+        inputs, input_signature_, flat_input_signature_);
+    return py::make_tuple(converted_inputs[0], py::dict(),
+                          converted_inputs[1], converted_inputs[2]);
+  }
+}
+
 py::object AsNdarray(py::handle value) {
   // TODO(tomhennigan) Support __array_interface__ too.
   return value.attr("__array__")();
@@ -436,6 +634,8 @@ PYBIND11_MODULE(_concrete_function, m) {
       .def("_convert_annotated_args_to_tensors",
            &FunctionSpec::ConvertAnnotatedArgsToTensors,
            "Attempts to autobox arguments annotated as tf.Tensor.")
+      .def("canonicalize_function_inputs",
+           &FunctionSpec::CanonicalizeFunctionInputs);
   m.def("_as_ndarray", &AsNdarray,
         "Converts value to an ndarray, assumes _is_ndarray(value).");
   m.def(
