@@ -1,0 +1,4 @@
+Adjustables: bash loop count (3), trial count (10), file_name.txt
+Run from the parent directory (.../eager):
+touch jlc_stats/results/file_name.txt
+for i in {1..3}; do jlc_stats/scripts/jlc_bash.sh 10 | python jlc_stats/scripts/jlc_benchmarks.py >> jlc_stats/results/file_name.txt; done

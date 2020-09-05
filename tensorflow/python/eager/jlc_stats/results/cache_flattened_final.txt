@@ -1,0 +1,42 @@
+
+Summary Statistics over 10.0 trials for MicroBenchmarks.benchmark_defun_matmul_2_by_2_CPU
+Mean: 171.64268414179483
+Median (of trial means): 167.76297092437744
+Std. dev. (of trial means): 13.222101633217013
+Summary Statistics over 10.0 trials for MicroBenchmarks.benchmark_defun_matmul_2_by_2_CPU_async
+Mean: 89.80374336242676
+Median (of trial means): 88.81699641545613
+Std. dev. (of trial means): 3.1347725042875445
+Summary Statistics over 10.0 trials for MicroBenchmarks.benchmark_defun_matmul_2_by_2_CPU_with_signature
+Mean: 189.01219606399536
+Median (of trial means): 184.62628920873004
+Std. dev. (of trial means): 17.426062541267356
+Total time elapsed: 159.1220383644104 sec
+
+Summary Statistics over 10.0 trials for MicroBenchmarks.benchmark_defun_matmul_2_by_2_CPU
+Mean: 184.30960019429526
+Median (of trial means): 184.26750103632608
+Std. dev. (of trial means): 15.785326268568745
+Summary Statistics over 10.0 trials for MicroBenchmarks.benchmark_defun_matmul_2_by_2_CPU_async
+Mean: 91.42348845799764
+Median (of trial means): 90.21479686101279
+Std. dev. (of trial means): 3.427704591838111
+Summary Statistics over 10.0 trials for MicroBenchmarks.benchmark_defun_matmul_2_by_2_CPU_with_signature
+Mean: 208.63701740900675
+Median (of trial means): 204.3055812517802
+Std. dev. (of trial means): 36.08950773441903
+Total time elapsed: 168.96101093292236 sec
+
+Summary Statistics over 10.0 trials for MicroBenchmarks.benchmark_defun_matmul_2_by_2_CPU
+Mean: 257.1409797668457
+Median (of trial means): 237.5640869140625
+Std. dev. (of trial means): 63.17280335662623
+Summary Statistics over 10.0 trials for MicroBenchmarks.benchmark_defun_matmul_2_by_2_CPU_async
+Mean: 88.13013235727946
+Median (of trial means): 88.66404692331949
+Std. dev. (of trial means): 3.2844862685717757
+Summary Statistics over 10.0 trials for MicroBenchmarks.benchmark_defun_matmul_2_by_2_CPU_with_signature
+Mean: 264.8823682467143
+Median (of trial means): 247.3079601923625
+Std. dev. (of trial means): 52.0922155582572
+Total time elapsed: 204.03938055038452 sec
